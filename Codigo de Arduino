@@ -1,0 +1,80 @@
+// --- PINES ECG (AD8232) ---
+const int loPlus  = 26;
+const int loMinus = 25;
+const int ecgPin  = 34;
+
+// --- PINES PCG ---
+const int pcgPin  = 35;
+
+// --- ESTADO ---
+volatile bool muestrear = false;
+bool activo = false;
+
+hw_timer_t* timer = NULL;
+
+// =========================================================
+//  ISR DEL TIMER — Core v3.x: sin portMUX, sin argumentos
+// =========================================================
+void IRAM_ATTR onTimer() {
+    if (activo) muestrear = true;
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(loPlus,  INPUT);
+    pinMode(loMinus, INPUT);
+
+    // ADC 12 bits, atenuación 11 dB (rango 0-3.3 V)
+    analogReadResolution(12);
+    analogSetAttenuation(ADC_11db);
+
+    // Core v3.x: timerBegin recibe la frecuencia en Hz directamente
+    // 1 000 000 Hz = 1 MHz → resolución de 1 µs por tick
+    timer = timerBegin(1000000);
+
+    // Core v3.x: timerAttachInterrupt solo recibe timer y función
+    timerAttachInterrupt(timer, &onTimer);
+
+    // Core v3.x: timerAlarm(timer, periodo_en_ticks, autoreload, reload_count)
+    // 1000 ticks a 1 MHz = 1000 µs = 1 ms → 1000 Hz
+    timerAlarm(timer, 1000, true, 0);
+
+    // Arrancar detenido; se activa con 'S'
+    timerStop(timer);
+}
+
+void loop() {
+    // --- RECEPCIÓN DE COMANDOS ---
+    if (Serial.available() > 0) {
+        char cmd = Serial.read();
+        if (cmd == 'S') {
+            activo = true;
+            timerStart(timer);
+        }
+        else if (cmd == 'K') {
+            activo = false;
+            timerStop(timer);
+            muestrear = false;
+        }
+    }
+
+    // --- MUESTREO SIMULTÁNEO ---
+    if (muestrear) {
+        muestrear = false;
+
+        int ecg_raw, pcg_raw;
+
+        // Lead-off: electrodo desconectado → enviar 0
+        if ((digitalRead(loPlus) == 1) || (digitalRead(loMinus) == 1)) {
+            ecg_raw = 0;
+        } else {
+            ecg_raw = analogRead(ecgPin);
+        }
+        pcg_raw = analogRead(pcgPin);
+
+        // Formato CSV: "ecg,pcg\n"
+        Serial.print(ecg_raw);
+        Serial.print(',');
+        Serial.println(pcg_raw);
+    }
+}
